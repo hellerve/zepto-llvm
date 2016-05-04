@@ -1,0 +1,56 @@
+(module "llvm"
+  (export
+    (list "compile" compile))
+
+  (PRIMITIVES
+    (make-hash "*" "mul"
+               "+" "add"
+               "-" "sub"
+               "/" "sdiv"
+               "quotient" "sdiv"
+               "remainder" "srem"
+               "arithmetic-shit" "ashr"
+               "bitwise-and" "and"
+               "bitwise-or" "or"
+               "bitwise-xor" "xor"))
+
+  (die (lambda msg
+    (begin
+      (apply error msg)
+      (exit 1))))
+
+  (resolve? (lambda (prim args)
+    (if (in? PRIMITIVES prim)
+      (++ (PRIMITIVES prim) " i32 " (string:join args ", "))
+      (++ "call i32 @" (->string prim) "(i32 " (string:join args ", i32 ") ")"))))
+
+  (stringify-args (lambda (args)
+    (map (lambda (x) (++ (if (eq? (x :type) :symbol) "%" "") (->string (x :value)))) args)))
+
+  (compile-instruction (lambda (ins)
+    (case (ins :type)
+      ((:application) (++ "\t%tmp = "
+                          (resolve? (->string (get-from ins [:function :value]))
+                                    (stringify-args (ins :arguments)))
+                          "\n\tret i32 %tmp"))
+      (else (die "operation type" (ins :type) "not supported")))))
+
+  (compile-args (lambda (args)
+    (++ "i32 " (string:join (stringify-args args) ", i32 "))))
+
+  (compile- (lambda (fn)
+    (++ "define i32 @" (->string (get-from fn [:name :value])) "(" (compile-args (fn :arguments)) ") {\n"
+        (compile-instruction (fn :body))
+        "\n}\n\n")))
+
+  (compile (lambda (forms)
+    (let ((main-fn (reduce
+                    (lambda (acc x) (if (eq? (get-from x [:name :value]) 'main) x acc))
+                    (nil)
+                    forms)))
+      (cond
+        ((not (null? (filter (lambda (x) (not (eq? (x :type) :define-fn))) forms)))
+          (die "not all top-level definitions were functions."))
+        ((falsy? main-fn)
+          (die "no main function found."))
+        (else (apply ++ (map compile- forms))))))))

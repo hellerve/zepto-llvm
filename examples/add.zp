@@ -1,0 +1,5 @@
+(define (add x y)
+  (+ x y))
+
+(define (main args)
+  (add 1 2))

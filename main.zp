@@ -1,0 +1,40 @@
+(load "compiler/ast")
+(import-all "ast")
+(load "llvm")
+(define compile (import "llvm:compile"))
+
+(define (catch-system syscall . args)
+  (let ((output (system syscall args))
+        (delim (lambda () (error "------------------------"))))
+    (if (not (eq? 0 (car output)))
+      (begin
+        (error "command" syscall "failed:")
+        (error "captured stdout:")
+        (delim)
+        (error (cadr output))
+        (delim)
+        (error "captured stderr:")
+        (delim)
+        (error (caddr output))
+        (delim)
+        (exit 1))
+      (error syscall args))))
+
+(define (toolchain file output)
+  (begin
+    (let ((f (open-output-file (++ file ".ir"))))
+      (begin
+        (write output f)
+        (close-output-file f)))
+    (write (++ "Compiled file " file " into LLVM IR (" file ".ir)"))
+    (write (++ "Compiling into assembly..."))
+    (catch-system "llc" (++ file ".ir") "-o" (++ file ".s"))
+    (write (++ "Compiled file " file " into assembly (" file ".s)"))
+    (write (++ "Compiling into machine code..."))
+    (catch-system "cc" (++ file ".s") "-o" (++ file))))
+
+(define output (compile (map ast:ast (parse (car zepto:args)))))
+(if (> (length zepto:args) 1)
+  (toolchain (cadr zepto:args) output)
+  (write output))
+"Compilation successful"
