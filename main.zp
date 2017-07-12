@@ -1,5 +1,7 @@
 (load "compiler/ast")
 (import-all "ast")
+(load "typeinfer/typeinfer")
+(import-all "typeinfer")
 (load "llvm")
 (define compile (import "llvm:compile"))
 
@@ -8,7 +10,7 @@
         (delim (lambda () (error "------------------------"))))
     (if (not (eq? 0 (car output)))
       (begin
-        (error "command" syscall "failed:")
+        (write-error (++ "command " syscall " failed:"))
         (error "captured stdout:")
         (delim)
         (error (cadr output))
@@ -20,21 +22,34 @@
         (exit 1))
       (error syscall args))))
 
+(define (status-proc c)
+  (lambda (msg)
+    (begin
+      (escape-sequence 1)
+      (color c)
+      (display "==> ")
+      (color :reset)
+      (write msg))))
+
+(define write-success (status-proc :green))
+(define write-status (status-proc :yellow))
+(define write-error (status-proc :red))
+
 (define (toolchain file output)
   (begin
     (let ((f (open-output-file (++ file ".ir"))))
       (begin
         (write output f)
         (close-output-file f)))
-    (write (++ "Compiled file " file " into LLVM IR (" file ".ir)"))
-    (write (++ "Compiling into assembly..."))
+    (write-success (++ "Compiled file " file " into LLVM IR (" file ".ir)"))
+    (write-status (++ "Compiling into assembly..."))
     (catch-system "llc" (++ file ".ir") "-o" (++ file ".s"))
-    (write (++ "Compiled file " file " into assembly (" file ".s)"))
-    (write (++ "Compiling into machine code..."))
+    (write-success (++ "Compiled file " file " into assembly (" file ".s)"))
+    (write-status (++ "Compiling into machine code..."))
     (catch-system "cc" (++ file ".s") "-o" (++ file))))
 
-(define output (compile (map ast:ast (parse (car zepto:args)))))
+(define output (compile (map (compose typeinfer:annotate-ast ast:ast) (parse (car zepto:args)))))
 (if (> (length zepto:args) 1)
   (toolchain (cadr zepto:args) output)
   (write output))
-"Compilation successful"
+(write-success "Compilation successful")

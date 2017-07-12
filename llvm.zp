@@ -2,6 +2,22 @@
   (export
     (list "compile" compile))
 
+  (DECLARES
+    (make-hash "write" #{:call "puts({argument})"
+                         :declare "declare i32 @puts(i8*)"}
+               "display" #{:call "call i32 @\"\01_fputs\"({argument}, %struct.__sFILE* %2) #2"
+                           :declare "%struct.__sFILE = type { i8*, i32, i32, i16, i16, %struct.__sbuf, i32, i8*, i32 (i8*)*, i32 (i8*, i8*, i32)*, i64 (i8*, i64, i32)*, i32 (i8*, i8*, i32)*, %struct.__sbuf, %struct.__sFILEX*, i32, [3 x i8], [1 x i8], %struct.__sbuf, i32, i64 }
+%struct.__sFILEX = type opaque
+%struct.__sbuf = type { i8*, i32 }
+declare i32 @\"\01_fputs\"(i8*, %struct.__sFILE*) #1;"
+                           :overlap "error"}
+               "error" #{:call "call i32 @\"\01_fputs\"({argument}, %struct.__sFILE* %1) #2"
+                         :declare "%struct.__sFILE = type { i8*, i32, i32, i16, i16, %struct.__sbuf, i32, i8*, i32 (i8*)*, i32 (i8*, i8*, i32)*, i64 (i8*, i64, i32)*, i32 (i8*, i8*, i32)*, %struct.__sbuf, %struct.__sFILEX*, i32, [3 x i8], [1 x i8], %struct.__sbuf, i32, i64 }
+%struct.__sFILEX = type opaque
+%struct.__sbuf = type { i8*, i32 }
+declare i32 @\"\01_fputs\"(i8*, %struct.__sFILE*) #1;"
+                          :overlap "display"}))
+
   (PRIMITIVES
     (make-hash "*" "mul"
                "+" "add"
@@ -19,29 +35,51 @@
       (apply error msg)
       (exit 1))))
 
+  (build-prim-fun (lambda (prim arg)
+    (string:substitute prim "{argument}" arg)))
+
   (resolve? (lambda (prim args)
-    (if (in? PRIMITIVES prim)
-      (++ (PRIMITIVES prim) " i32 " (string:join args ", "))
-      (++ "call i32 @" (->string prim) "(i32 " (string:join args ", i32 ") ")"))))
+    (cond
+      ((in? PRIMITIVES prim)
+        (make-hash :form (++ (PRIMITIVES prim) " i32 " (string:join args ", "))))
+      ((in? DECLARES prim)
+        (make-hash
+          :form (build-prim-fun (get-from DECLARES `(,prim :call))
+                                (++ "i32 " (string:join args ", i32 ")))
+          :declares (get-from DECLARES `(,prim :declare))))
+      (else
+        (make-hash :form (++ "call i32 @" (->string prim) "(i32 " (string:join args ", i32 ") ")"))))))
 
   (stringify-args (lambda (args)
     (map (lambda (x) (++ (if (eq? (x :type) :symbol) "%" "") (->string (x :value)))) args)))
 
   (compile-instruction (lambda (ins)
     (case (ins :type)
-      ((:application) (++ "\t%tmp = "
-                          (resolve? (->string (get-from ins [:function :value]))
-                                    (stringify-args (ins :arguments)))
-                          "\n\tret i32 %tmp"))
+      ((:application)
+        (let ((ins (resolve? (->string (get-from ins [:function :value]))
+                             (stringify-args (ins :arguments)))))
+          (hash:set ins :form (++ "\t%tmp = " (ins :form) "\n\tret i32 %tmp"))))
       (else (die "operation type" (ins :type) "not supported")))))
 
   (compile-args (lambda (args)
     (++ "i32 " (string:join (stringify-args args) ", i32 "))))
 
   (compile- (lambda (fn)
-    (++ "define i32 @" (->string (get-from fn [:name :value])) "(" (compile-args (fn :arguments)) ") {\n"
-        (compile-instruction (fn :body))
-        "\n}\n\n")))
+    (let ((ins (compile-instruction (fn :body))))
+      (hash:set ins :form
+        (++ "define i32 @" (->string (get-from fn [:name :value]))
+            "(" (compile-args (fn :arguments)) ") {\n"
+            (ins :form)
+            "\n}\n\n")))))
+
+  (build (lambda (forms)
+    (let ((filter-fun
+            (lambda (x)
+              (apply ++
+                     (map
+                        (lambda (h) (apply ++ (hash:values (hash:filter-by-keys (curry eq? x) h))))
+                        forms)))))
+      (++ (filter-fun :form) (filter-fun :declares)))))
 
   (compile (lambda (forms)
     (let ((main-fn (reduce
@@ -53,4 +91,4 @@
           (die "not all top-level definitions were functions."))
         ((falsy? main-fn)
           (die "no main function found."))
-        (else (apply ++ (map compile- forms))))))))
+        (else (build (map compile- forms))))))))
